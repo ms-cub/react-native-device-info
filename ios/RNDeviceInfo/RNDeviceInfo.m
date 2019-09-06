@@ -13,6 +13,7 @@
 #import <React/RCTUtils.h>
 #import "RNDeviceInfo.h"
 #import "DeviceUID.h"
+#import <WebKit/WebKit.h>
 
 #if !(TARGET_OS_TV)
 #import <LocalAuthentication/LocalAuthentication.h>
@@ -34,6 +35,7 @@ typedef NS_ENUM(NSInteger, DeviceType) {
 
 @implementation RNDeviceInfo
 {
+    WKWebView *webView;
     bool hasListeners;
 }
 
@@ -110,15 +112,32 @@ RCT_EXPORT_MODULE();
 #endif
 }
 
-- (NSString*) userAgent
+RCT_EXPORT_METHOD(getUserAgent:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 {
 #if TARGET_OS_TV
-    return @"not available";
+    reject(@"not available");
 #else
-    UIWebView* webView = [[UIWebView alloc] initWithFrame:CGRectZero];
-    return [webView stringByEvaluatingJavaScriptFromString:@"navigator.userAgent"];
+    __weak RNDeviceInfo *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong RNDeviceInfo *strongSelf = weakSelf;
+        if (strongSelf) {
+            // Save WKWebView (it might deallocate before we ask for user Agent)
+            strongSelf->webView = [[WKWebView alloc] init];
+            
+            [strongSelf->webView evaluateJavaScript:@"window.navigator.userAgent;" completionHandler:^(id _Nullable result, NSError * _Nullable error) {
+                if (error) {
+                    reject(@"getUserAgentError", error.localizedDescription, error);
+                    return;
+                }
+                resolve([NSString stringWithFormat:@"%@", result]);
+                // Destroy the WKWebView after task is complete
+                strongSelf->webView = nil;
+            }];
+        }
+    });
 #endif
 }
+
 
 - (NSString*) deviceLocale
 {
@@ -266,7 +285,6 @@ RCT_EXPORT_MODULE();
              @"buildId": [self getBuildId],
              @"systemManufacturer": @"Apple",
              @"carrier": self.carrier ?: [NSNull null],
-             @"userAgent": self.userAgent ?: [NSNull null],
              @"timezone": self.timezone ?: [NSNull null],
              @"isEmulator": @(self.isEmulator),
              @"isTablet": @(self.isTablet),
